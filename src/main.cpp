@@ -1,10 +1,12 @@
 /*
- * PlatformIO / Arduino port of Zephyr samples/drivers/lora/send
+ * Bidirectional LoRa transceiver ("hi" ping-pong) for two boards.
  *
- * Radio parameters match the Zephyr sample exactly, so packets are
- * receivable by the Zephyr samples/drivers/lora/receive sample:
- *   865.1 MHz, BW 125 kHz, SF10, CR 4/5, preamble 8,
- *   private (non-public) sync word, +4 dBm TX power.
+ * Node A: sends "hi from A" every second, then listens for the reply.
+ * Node B: listens, prints anything received, replies "hi from B".
+ * Both boards therefore transmit AND receive.
+ *
+ * Radio parameters (865.1 MHz, BW 125 kHz, SF10, CR 4/5, preamble 8,
+ * private sync word, +4 dBm) match Zephyr's samples/drivers/lora samples.
  */
 
 #include <Arduino.h>
@@ -20,10 +22,50 @@ SX1276 radio = new Module(LORA_CS, LORA_DIO0, LORA_RST, LORA_DIO1);
 #error "Define USE_SX1262 or USE_SX1276 in build_flags"
 #endif
 
-#define MAX_DATA_LEN 12
+#if defined(NODE_A)
+#define NODE_NAME "A"
+#else
+#define NODE_NAME "B"
+#endif
 
-static uint8_t data[MAX_DATA_LEN] = {'h', 'e', 'l', 'l', 'o', 'w',
-                                     'o', 'r', 'l', 'd', ' ', '0'};
+static const char hi_msg[] = "hi from " NODE_NAME;
+
+static void sendHi(void) {
+    int state = radio.transmit((uint8_t *)hi_msg, sizeof(hi_msg) - 1);
+    if (state == RADIOLIB_ERR_NONE) {
+        Serial.print("Sent: ");
+        Serial.println(hi_msg);
+    } else {
+        Serial.print("Send failed, code ");
+        Serial.println(state);
+    }
+}
+
+/* Listen up to timeout_ms; print and return true if a packet arrived. */
+static bool listenFor(uint32_t timeout_ms) {
+    uint32_t start = millis();
+    uint8_t buf[64];
+
+    while (millis() - start < timeout_ms) {
+        int state = radio.receive(buf, sizeof(buf));
+        if (state == RADIOLIB_ERR_NONE) {
+            size_t len = radio.getPacketLength();
+            Serial.print("Received: ");
+            Serial.write(buf, len);
+            Serial.print("  (RSSI ");
+            Serial.print(radio.getRSSI());
+            Serial.print(" dBm, SNR ");
+            Serial.print(radio.getSNR());
+            Serial.println(" dB)");
+            return true;
+        }
+        if (state != RADIOLIB_ERR_RX_TIMEOUT) {
+            Serial.print("Receive failed, code ");
+            Serial.println(state);
+        }
+    }
+    return false;
+}
 
 void setup() {
     Serial.begin(115200);
@@ -49,55 +91,29 @@ void setup() {
     }
 
 #if defined(USE_SX1262)
-    /* SX1262 modules (incl. RAK4631) drive the RF switch from DIO2 */
+    /* SX1262 modules drive the RF switch from DIO2 */
     radio.setDio2AsRfSwitch(true);
 #endif
 
-    Serial.println("LoRa radio configured");
+    Serial.println("LoRa transceiver ready, node " NODE_NAME);
 }
 
-#if defined(ROLE_RX)
-/* Receiver: mirrors Zephyr samples/drivers/lora/receive */
+#if defined(NODE_A)
+/* Node A: initiator — say hi, wait for B's reply, repeat every second */
 void loop() {
-    uint8_t buf[64];
-    int state = radio.receive(buf, sizeof(buf));
-    if (state == RADIOLIB_ERR_NONE) {
-        size_t len = radio.getPacketLength();
-        Serial.print("Received ");
-        Serial.print(len);
-        Serial.print(" bytes: ");
-        Serial.write(buf, len);
-        Serial.print("  RSSI ");
-        Serial.print(radio.getRSSI());
-        Serial.print(" dBm, SNR ");
-        Serial.print(radio.getSNR());
-        Serial.println(" dB");
-    } else if (state != RADIOLIB_ERR_RX_TIMEOUT) {
-        Serial.print("LoRa receive failed, code ");
-        Serial.println(state);
+    sendHi();
+    if (!listenFor(3000)) {
+        Serial.println("No reply from B");
     }
+    delay(1000);
 }
 #else
+/* Node B: responder — wait for a hi, then reply with our own */
 void loop() {
-    int state = radio.transmit(data, MAX_DATA_LEN);
-    if (state != RADIOLIB_ERR_NONE) {
-        Serial.print("LoRa send failed, code ");
-        Serial.println(state);
-        return;
-    }
-
-    Serial.print("Data sent ");
-    Serial.print((char)data[MAX_DATA_LEN - 1]);
-    Serial.println("!");
-
-    /* Send data at 1s interval */
-    delay(1000);
-
-    /* Increment final character to differentiate packets */
-    if (data[MAX_DATA_LEN - 1] == '9') {
-        data[MAX_DATA_LEN - 1] = '0';
-    } else {
-        data[MAX_DATA_LEN - 1] += 1;
+    if (listenFor(60000)) {
+        /* give A time to switch to receive mode */
+        delay(100);
+        sendHi();
     }
 }
-#endif /* ROLE_RX */
+#endif
