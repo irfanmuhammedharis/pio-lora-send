@@ -9,8 +9,10 @@ Zephyr boards running the same samples.
 
 ## Environments
 
-- `xiao_tx` / `xiao_rx` (defaults) — Seeed XIAO nRF52840 (Sense) + SX1262
-  (Wio-SX1262 wiring: CS=D4, DIO1=D1, RST=D2, BUSY=D3). Sender / receiver roles.
+- `xiao_a` / `xiao_b` (defaults) — Seeed XIAO nRF52840 (Sense) + SX1262
+  (Wio-SX1262 wiring: CS=D4, DIO1=D1, RST=D2, BUSY=D3, TCXO on DIO3 @1.8V).
+  Bidirectional transceiver ping-pong: node A sends "hi from A" every second
+  and listens for the reply; node B listens and answers "hi from B".
   Uses the project-local board def in `boards/seeed_xiao_nrf52840_sense.json`
   (SoftDevice S140 v7.3.0 — matches the Seeed bootloader; the required
   `nrf52840_s140_v7.ld` was added to the installed Adafruit core from Seeed's
@@ -22,10 +24,12 @@ Zephyr boards running the same samples.
 ## Usage
 
 ```bash
-pio run -e xiao_tx -t upload --upload-port /dev/ttyACM0   # flash sender
-pio run -e xiao_rx -t upload --upload-port /dev/ttyACM1   # flash receiver
-pio device monitor -p /dev/ttyACM1 -b 115200              # watch received packets
+pio run -e xiao_a -t upload --upload-port /dev/ttyACM0    # flash node A
+pio run -e xiao_b -t upload --upload-port /dev/ttyACM1    # flash node B
+pio device monitor -p /dev/ttyACM0 -b 115200              # watch node A
+pio device monitor -p /dev/ttyACM1 -b 115200              # watch node B
 ```
 
-Verified end-to-end: receiver prints `Received 12 bytes: helloworld N` with
-RSSI/SNR for every packet the sender emits at 1 s intervals.
+Verified end-to-end: both nodes print every message they send and receive
+(`Sent: hi from A` / `Received: hi from B ...` with RSSI/SNR), with zero
+missed round-trips at 1 s intervals.
